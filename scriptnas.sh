@@ -39,7 +39,7 @@ groupadd direction
 groupadd compta
 groupadd communication
 groupadd salaries
-
+groupadd commun
 ##############################
 # 4. Utilisateurs
 ##############################
@@ -51,11 +51,11 @@ adduser --disabled-password --gecos "" lagaffe
 adduser --disabled-password --gecos "" lebrac
 
 # Assignation groupes
-usermod -aG direction dupuis
-usermod -aG compta boulier
-usermod -aG communication jeanne
-usermod -aG salaries lagaffe
-usermod -aG salaries lebrac
+usermod -aG direction commun dupuis
+usermod -aG compta commun boulier
+usermod -aG communication commun jeanne
+usermod -aG salaries commun lagaffe
+usermod -aG salaries commun lebrac
 
 ##############################
 # 5. Droits Linux
