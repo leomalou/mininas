@@ -1,118 +1,148 @@
 #!/bin/bash
 
-echo "=== MiniNAS TSSR : Correctif droits ==="
+echo "=== MiniNAS TSSR - Installation complète ==="
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Lance le script en root."
+  echo "Lance ce script en root."
   exit 1
 fi
 
-BASE_DIR="/partage"
 PASSWORD="tech"
+BASE="/partage"
 
-# Utilisateurs et dossiers métiers
-USERS=("dupuis" "boulier" "jeanne" "lagaffe" "lebrac")
-DIRECTIONS=("direction" "compta" "communication" "lagaffe" "lebrac")
+########## 1. Installation ##########
 
-GROUP_COMMUN="commun"
+apt update -y
+apt install -y samba
 
-# 1. Création des dossiers
-mkdir -p $BASE_DIR/public
-mkdir -p $BASE_DIR/commun
+########## 2. Groupes ##########
 
-for i in ${!USERS[@]}; do
-    mkdir -p "$BASE_DIR/${DIRECTIONS[$i]}"  # dossier métier
-    mkdir -p "$BASE_DIR/${USERS[$i]}"       # dossier perso
-done
+groupadd employes 2>/dev/null || true
 
-# Fichiers témoins
-echo "Public" > $BASE_DIR/public/readme.txt
-echo "Commun" > $BASE_DIR/commun/readme.txt
-for i in ${!USERS[@]}; do
-    echo "${DIRECTIONS[$i]}" > "$BASE_DIR/${DIRECTIONS[$i]}/readme.txt"
-    echo "${USERS[$i]} perso" > "$BASE_DIR/${USERS[$i]}/readme.txt"
-done
+########## 3. Utilisateurs ##########
 
-# 2. Création groupe commun
-groupadd -f $GROUP_COMMUN
+USERS="dupuis boulier jeanne lagaffe lebrac"
 
-# 3. Création utilisateurs Linux + Samba
-for i in ${!USERS[@]}; do
-    u=${USERS[$i]}
+for u in $USERS; do
     if ! id "$u" >/dev/null 2>&1; then
         useradd -m "$u"
     fi
-    (echo "$PASSWORD"; echo "$PASSWORD") | smbpasswd -s -a "$u"
+    usermod -aG employes "$u"
+
+    # Mot de passe Samba
+    (echo "$PASSWORD"; echo "$PASSWORD") | smbpasswd -a -s "$u"
 done
 
-# 4. Droits Linux
-chown -R root:root $BASE_DIR/public
-chmod -R 755 $BASE_DIR/public
+########## 4. Arborescence ##########
 
-chown -R root:$GROUP_COMMUN $BASE_DIR/commun
-chmod -R 770 $BASE_DIR/commun
+mkdir -p $BASE/public
+mkdir -p $BASE/commun
+mkdir -p $BASE/direction
+mkdir -p $BASE/compta
+mkdir -p $BASE/communication
 
-for i in ${!USERS[@]}; do
-    u=${USERS[$i]}
-    # dossier métier
-    chown -R $u:$u $BASE_DIR/${DIRECTIONS[$i]}
-    chmod -R 700 $BASE_DIR/${DIRECTIONS[$i]}
-    # dossier perso
-    chown -R $u:$u $BASE_DIR/$u
-    chmod -R 700 $BASE_DIR/$u
-done
+echo "Fichier Public" > $BASE/public/readme.txt
+echo "Fichier Commun" > $BASE/commun/readme.txt
+echo "Direction" > $BASE/direction/readme.txt
+echo "Compta" > $BASE/compta/readme.txt
+echo "Communication" > $BASE/communication/readme.txt
 
-# 5. smb.conf via echo
+########## 5. Droits Linux ##########
+
+# public → lecture seule pour tous
+chown -R root:employes $BASE/public
+chmod -R 755 $BASE/public
+
+# commun → RW pour tous les employés
+chown -R root:employes $BASE/commun
+chmod -R 775 $BASE/commun
+
+# direction (Dupuis)
+chown -R dupuis:dupuis $BASE/direction
+chmod -R 770 $BASE/direction
+
+# compta (Boulier)
+chown -R boulier:boulier $BASE/compta
+chmod -R 770 $BASE/compta
+
+# communication (Jeanne)
+chown -R jeanne:jeanne $BASE/communication
+chmod -R 770 $BASE/communication
+
+########## 6. smb.conf ##########
+
 mv /etc/samba/smb.conf /etc/samba/smb.conf.bak
 
 echo "[global]" > /etc/samba/smb.conf
 echo "   workgroup = Contoso" >> /etc/samba/smb.conf
 echo "   netbios name = NAS" >> /etc/samba/smb.conf
-echo "   comment = MiniNAS TSSR" >> /etc/samba/smb.conf
-echo "   interfaces = ens33" >> /etc/samba/smb.conf
-echo "   encrypt passwords = true" >> /etc/samba/smb.conf
+echo "   server string = MiniNAS TSSR" >> /etc/samba/smb.conf
 echo "   security = user" >> /etc/samba/smb.conf
 echo "   passdb backend = tdbsam" >> /etc/samba/smb.conf
+echo "   encrypt passwords = yes" >> /etc/samba/smb.conf
+echo "   interfaces = lo ens33" >> /etc/samba/smb.conf
 echo "   obey pam restrictions = yes" >> /etc/samba/smb.conf
+echo "" >> /etc/samba/smb.conf
+
+# Homes
+echo "[homes]" >> /etc/samba/smb.conf
+echo "   path = /home/%S" >> /etc/samba/smb.conf
+echo "   browseable = no" >> /etc/samba/smb.conf
+echo "   valid users = %S" >> /etc/samba/smb.conf
+echo "   create mask = 600" >> /etc/samba/smb.conf
+echo "   directory mask = 700" >> /etc/samba/smb.conf
 echo "" >> /etc/samba/smb.conf
 
 # Public
 echo "[public]" >> /etc/samba/smb.conf
-echo "   path = $BASE_DIR/public" >> /etc/samba/smb.conf
-echo "   browseable = yes" >> /etc/samba/smb.conf
+echo "   path = /partage/public" >> /etc/samba/smb.conf
 echo "   read only = yes" >> /etc/samba/smb.conf
-echo "   guest ok = yes" >> /etc/samba/smb.conf
+echo "   valid users = @employes" >> /etc/samba/smb.conf
+echo "   create mask = 644" >> /etc/samba/smb.conf
+echo "   directory mask = 755" >> /etc/samba/smb.conf
 echo "" >> /etc/samba/smb.conf
 
 # Commun
 echo "[commun]" >> /etc/samba/smb.conf
-echo "   path = $BASE_DIR/commun" >> /etc/samba/smb.conf
-echo "   browseable = yes" >> /etc/samba/smb.conf
-echo "   valid users = @${GROUP_COMMUN}" >> /etc/samba/smb.conf
-echo "   writeable = yes" >> /etc/samba/smb.conf
+echo "   path = /partage/commun" >> /etc/samba/smb.conf
+echo "   read only = no" >> /etc/samba/smb.conf
+echo "   valid users = @employes" >> /etc/samba/smb.conf
+echo "   force group = employes" >> /etc/samba/smb.conf
+echo "   create mask = 664" >> /etc/samba/smb.conf
+echo "   directory mask = 775" >> /etc/samba/smb.conf
 echo "" >> /etc/samba/smb.conf
 
-# Dossiers métiers + perso
-for i in ${!USERS[@]}; do
-    u=${USERS[$i]}
-    # dossier métier
-    echo "[${DIRECTIONS[$i]}]" >> /etc/samba/smb.conf
-    echo "   path = $BASE_DIR/${DIRECTIONS[$i]}" >> /etc/samba/smb.conf
-    echo "   valid users = $u" >> /etc/samba/smb.conf
-    echo "   writeable = yes" >> /etc/samba/smb.conf
-    echo "" >> /etc/samba/smb.conf
-    # dossier perso
-    echo "[$u]" >> /etc/samba/smb.conf
-    echo "   path = $BASE_DIR/$u" >> /etc/samba/smb.conf
-    echo "   valid users = $u" >> /etc/samba/smb.conf
-    echo "   writeable = yes" >> /etc/samba/smb.conf
-    echo "" >> /etc/samba/smb.conf
-done
+# Direction
+echo "[direction]" >> /etc/samba/smb.conf
+echo "   path = /partage/direction" >> /etc/samba/smb.conf
+echo "   read only = no" >> /etc/samba/smb.conf
+echo "   valid users = dupuis" >> /etc/samba/smb.conf
+echo "   create mask = 660" >> /etc/samba/smb.conf
+echo "   directory mask = 770" >> /etc/samba/smb.conf
+echo "" >> /etc/samba/smb.conf
 
-# 6. Redémarrage Samba
-systemctl restart smbd
-systemctl restart nmbd
+# Compta
+echo "[compta]" >> /etc/samba/smb.conf
+echo "   path = /partage/compta" >> /etc/samba/smb.conf
+echo "   read only = no" >> /etc/samba/smb.conf
+echo "   valid users = boulier" >> /etc/samba/smb.conf
+echo "   create mask = 660" >> /etc/samba/smb.conf
+echo "   directory mask = 770" >> /etc/samba/smb.conf
+echo "" >> /etc/samba/smb.conf
 
-echo "=== MiniNAS TSSR terminé ==="
-echo "Accès Windows : \\\\NAS"
-echo "Mot de passe pour tous : $PASSWORD"
+# Communication
+echo "[communication]" >> /etc/samba/smb.conf
+echo "   path = /partage/communication" >> /etc/samba/smb.conf
+echo "   read only = no" >> /etc/samba/smb.conf
+echo "   valid users = jeanne" >> /etc/samba/smb.conf
+echo "   create mask = 660" >> /etc/samba/smb.conf
+echo "   directory mask = 770" >> /etc/samba/smb.conf
+echo "" >> /etc/samba/smb.conf
+
+########## 7. Redémarrage ##########
+
+systemctl restart smbd nmbd
+
+echo "=== INSTALLATION TERMINEE ==="
+echo "\\\\NAS pour accéder au serveur"
+echo "Mot de passe de tous les comptes : tech"
